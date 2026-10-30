@@ -1,22 +1,43 @@
-import { kvStorage, StorageReadError } from './kv-client';
-import { CreateReportDTO, Reporte } from '@/types/index';
-import { PendingReport, SyncStatus } from '@/types/offline';
+import { kvStorage } from './kv-client';
+import type { CreateReportDTO, Reporte } from '@/types/index';
+import type { PendingReport, SyncStatus } from '@/types/offline';
 import { persistReportPhotos } from '@/utils/photo-storage';
 
-const PENDING_REPORTS_KEY = '@reporte_ciudadano:reportes_pendientes';
-
 /**
- * Genera un identificador único seguro para almacenamiento local.
+ * Prefijo de las claves de reportes locales. Cada reporte ocupa su propia clave,
+ * de modo que actualizar uno nunca reescribe la colección completa.
  */
-function generateLocalId(): string {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).slice(2, 8);
-  return `loc-${timestamp}-${random}`;
+const PENDING_REPORT_KEY_PREFIX = '@reporte_ciudadano:pending_report:';
+
+/** Formato de id que acepta la API para registros generados por el cliente. */
+const REPORT_ID_PATTERN = /^rep-[A-Za-z0-9_-]{3,36}$/;
+
+function pendingReportKey(localId: string): string {
+  return `${PENDING_REPORT_KEY_PREFIX}${localId}`;
 }
 
 /**
- * Deriva el código provisional determinista a partir del identificador
+ * Genera un id compatible con la API (`rep-<timestampBase36><aleatorio>`).
+ * El timestamp en base 36 aporta unicidad temporal y el sufijo aleatorio evita
+ * colisiones entre dispositivos; ambos son alfanuméricos, así que el resultado
+ * cumple `/^rep-[A-Za-z0-9_-]{3,36}$/` por construcción.
+ */
+export function generateReportId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).slice(2, 8);
 
+  return `rep-${timestamp}${random}`;
+}
+
+/**
+ * Indica si un id tiene el formato que exige la API.
+ */
+export function isValidReportId(id: string): boolean {
+  return REPORT_ID_PATTERN.test(id);
+}
+
+/**
+ * Deriva el código provisional determinista a partir del identificador local.
  */
 function generateProvisionalCode(localId: string): string {
   const suffix = localId.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(-12);
@@ -24,28 +45,22 @@ function generateProvisionalCode(localId: string): string {
 }
 
 /**
- * Obtiene la lista completa de reportes guardados localmente.
- * Solo la ausencia de datos se interpreta como lista vacía.
+ * Obtiene la lista completa de reportes guardados localmente, del más reciente al más antiguo.
  */
 export async function getAllLocalReports(): Promise<PendingReport[]> {
-  return readQueue();
-}
+  const keys = await kvStorage.getKeysByPrefix(PENDING_REPORT_KEY_PREFIX);
 
-/**
- * Lee la cola local y valida que el contenido guardado sea una lista.
- */
-async function readQueue(): Promise<PendingReport[]> {
-  const stored = await kvStorage.getItem<unknown>(PENDING_REPORTS_KEY);
-
-  if (stored === null) {
+  if (keys.length === 0) {
     return [];
   }
 
-  if (!Array.isArray(stored)) {
-    throw new StorageReadError(PENDING_REPORTS_KEY, JSON.stringify(stored));
-  }
+  const stored = await Promise.all(
+    keys.map((key) => kvStorage.getItem<PendingReport>(key)),
+  );
 
-  return stored as PendingReport[];
+  return stored
+    .filter((item): item is PendingReport => item !== null)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 /**
@@ -58,25 +73,31 @@ export async function getPendingReports(): Promise<PendingReport[]> {
 
 /**
  * Obtiene un reporte local por su ID local o clientRequestId.
+ * Busca primero la clave individual y solo recorre el resto si no hay coincidencia directa.
  */
 export async function getLocalReportById(id: string): Promise<PendingReport | null> {
+  const direct = await kvStorage.getItem<PendingReport>(pendingReportKey(id));
+
+  if (direct) {
+    return direct;
+  }
+
   const all = await getAllLocalReports();
-  return all.find((item) => item.localId === id || item.clientRequestId === id) ?? null;
+  return all.find((item) => item.clientRequestId === id) ?? null;
 }
 
 /**
- * Guarda un nuevo reporte en la cola local marcado como sincronizado: false.
+ * Guarda un nuevo reporte marcado como sincronizado: false en su propia clave.
+ * Reutiliza el id y la fecha de creación del cliente cuando ya vienen en el payload,
+ * para que un reintento con el mismo id no genere un registro distinto.
  */
 export async function savePendingReport(
   payload: CreateReportDTO,
   options?: { uncertainResponse?: boolean }
 ): Promise<PendingReport> {
-  // Se lee antes de copiar fotos: si la cola es ilegible conviene fallar sin dejar archivos huérfanos.
-  const queue = await readQueue();
-
-  const localId = generateLocalId();
+  const localId = payload.id ?? generateReportId();
+  const creadoEn = payload.creadoEn ?? new Date().toISOString();
   const clientRequestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const now = new Date().toISOString();
 
   const fotosPersistidas = payload.fotos?.length
     ? await persistReportPhotos(payload.fotos)
@@ -91,37 +112,36 @@ export async function savePendingReport(
     fotos: fotosPersistidas,
     coordenadas: payload.coordenadas,
     direccion: payload.direccion,
-    zonaId: payload.zonaId ,
+    zonaId: payload.zonaId,
     estado: 'recibido',
     autorId: payload.autorId,
     cuadrillaId: payload.cuadrillaId,
     duplicadoDe: null,
     adhesiones: 0,
-    creadoEn: now,
+    creadoEn,
     sincronizado: false,
   };
 
-  const pendingItem: PendingReportItem = {
+  const pendingItem: PendingReport = {
     localId,
     clientRequestId,
     reporte: reporteLocal,
     payload: {
       ...payload,
+      id: localId,
+      creadoEn,
       fotos: fotosPersistidas,
     },
     syncStatus: 'pendiente',
     uncertainResponse: options?.uncertainResponse ?? false,
     retryCount: 0,
-    createdAt: now,
+    createdAt: creadoEn,
   };
 
-  queue.unshift(pendingItem);
-  await kvStorage.setItem(PENDING_REPORTS_KEY, queue);
+  await kvStorage.setItem(pendingReportKey(localId), pendingItem);
 
   return pendingItem;
 }
-
-type PendingReportItem = PendingReport;
 
 export interface UpdateSyncStatusOptions {
   uncertainResponse?: boolean;
@@ -130,32 +150,30 @@ export interface UpdateSyncStatusOptions {
 /**
  * Normaliza a 'pendiente' con respuesta incierta cualquier reporte que haya quedado
  * en estado 'sincronizando' a causa de un cierre o interrupción previa de la aplicación.
+ * Reescribe únicamente las claves de los reportes afectados.
  */
 export async function normalizeInterruptedReports(): Promise<number> {
-  const queue = await getAllLocalReports();
-  let normalizedCount = 0;
+  const all = await getAllLocalReports();
+  const interrupted = all.filter((item) => item.syncStatus === 'sincronizando');
 
-  const updatedQueue = queue.map((item) => {
-    if (item.syncStatus === 'sincronizando') {
-      normalizedCount += 1;
-      return {
+  await Promise.all(
+    interrupted.map((item) => {
+      const normalized: PendingReport = {
         ...item,
-        syncStatus: 'pendiente' as const,
+        syncStatus: 'pendiente',
         uncertainResponse: true,
       };
-    }
-    return item;
-  });
 
-  if (normalizedCount > 0) {
-    await kvStorage.setItem(PENDING_REPORTS_KEY, updatedQueue);
-  }
+      return kvStorage.setItem(pendingReportKey(item.localId), normalized);
+    }),
+  );
 
-  return normalizedCount;
+  return interrupted.length;
 }
 
 /**
  * Actualiza el estado de sincronización y registra errores o reintentos.
+ * Lee y reescribe únicamente la clave del reporte indicado.
  */
 export async function updateSyncStatus(
   localId: string,
@@ -163,14 +181,13 @@ export async function updateSyncStatus(
   errorMessage?: string,
   options?: UpdateSyncStatusOptions
 ): Promise<PendingReport | null> {
-  const queue = await getAllLocalReports();
-  const index = queue.findIndex((item) => item.localId === localId);
+  const key = pendingReportKey(localId);
+  const current = await kvStorage.getItem<PendingReport>(key);
 
-  if (index === -1) {
+  if (!current) {
     return null;
   }
 
-  const current = queue[index];
   const updated: PendingReport = {
     ...current,
     syncStatus: status,
@@ -183,8 +200,7 @@ export async function updateSyncStatus(
         : current.uncertainResponse,
   };
 
-  queue[index] = updated;
-  await kvStorage.setItem(PENDING_REPORTS_KEY, queue);
+  await kvStorage.setItem(key, updated);
   return updated;
 }
 
@@ -197,14 +213,13 @@ export async function markReportAsSynced(
   serverReportId: string,
   codigo: string
 ): Promise<PendingReport | null> {
-  const queue = await getAllLocalReports();
-  const index = queue.findIndex((item) => item.localId === localId);
+  const key = pendingReportKey(localId);
+  const current = await kvStorage.getItem<PendingReport>(key);
 
-  if (index === -1) {
+  if (!current) {
     return null;
   }
 
-  const current = queue[index];
   const updated: PendingReport = {
     ...current,
     syncStatus: 'sincronizado',
@@ -219,29 +234,30 @@ export async function markReportAsSynced(
     errorMessage: undefined,
   };
 
-  queue[index] = updated;
-  await kvStorage.setItem(PENDING_REPORTS_KEY, queue);
+  await kvStorage.setItem(key, updated);
   return updated;
 }
 
 /**
  * Elimina un reporte del almacenamiento local.
+ * Devuelve false si la clave no existía.
  */
 export async function removeLocalReport(localId: string): Promise<boolean> {
-  const queue = await getAllLocalReports();
-  const filtered = queue.filter((item) => item.localId !== localId);
+  const key = pendingReportKey(localId);
+  const current = await kvStorage.getItem<PendingReport>(key);
 
-  if (filtered.length === queue.length) {
+  if (!current) {
     return false;
   }
 
-  await kvStorage.setItem(PENDING_REPORTS_KEY, filtered);
+  await kvStorage.removeItem(key);
   return true;
 }
 
 /**
- * Limpia todos los reportes almacenados localmente.
+ * Limpia todos los reportes almacenados localmente, sin tocar otras claves.
  */
 export async function clearAllLocalReports(): Promise<void> {
-  await kvStorage.removeItem(PENDING_REPORTS_KEY);
+  const keys = await kvStorage.getKeysByPrefix(PENDING_REPORT_KEY_PREFIX);
+  await Promise.all(keys.map((key) => kvStorage.removeItem(key)));
 }

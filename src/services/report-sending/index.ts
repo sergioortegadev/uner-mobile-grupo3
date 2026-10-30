@@ -3,7 +3,7 @@ import { authService } from "@/services/auth";
 import { isOnline } from "@/services/network";
 import { reportService } from "@/services/reports";
 import {
-  getAllLocalReports,
+  generateReportId,
   getPendingReports,
   markReportAsSynced,
   normalizeInterruptedReports,
@@ -11,7 +11,6 @@ import {
   updateSyncStatus,
 } from "@/services/storage";
 import type { CreateReportDTO, Reporte } from "@/types/index";
-import { reconcileUncertainReport } from "./reconciliation";
 import { SEND_TIMEOUT_MS, withTimeout } from "./timeout";
 import type { NewReportInput, SendReportResult, SyncSummary } from "./types";
 import { validateNewReport } from "./validation";
@@ -39,8 +38,13 @@ export async function sendReport(
       };
     }
 
+    // El id y la fecha de creación se generan antes del intento online: si el envío
+    // falla o no confirma a tiempo, el pendiente conserva exactamente los mismos y el
+    // servidor puede deduplicar por id cuando el reintento llegue.
     const reportData: CreateReportDTO = {
       ...validation.datos,
+      id: generateReportId(),
+      creadoEn: new Date().toISOString(),
       autorId: author.id,
       cuadrillaId: null,
     };
@@ -131,15 +135,6 @@ async function runSync(): Promise<SyncSummary> {
     return { sent: 0, pending: null };
   }
 
-  const allLocal = await getAllLocalReports();
-  const claimedServerIds = new Set<string>(
-    allLocal.flatMap((r) =>
-      r.syncStatus === "sincronizado" && r.serverReportId
-        ? [r.serverReportId]
-        : [],
-    ),
-  );
-
   const pending = (await getPendingReports()).sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
   );
@@ -149,34 +144,9 @@ async function runSync(): Promise<SyncSummary> {
   for (const item of pending) {
     await updateSyncStatus(item.localId, "sincronizando");
 
-    if (item.uncertainResponse) {
-      const reconciliation = await reconcileUncertainReport(item, {
-        excludeReportIds: claimedServerIds,
-      });
-
-      if (reconciliation.status === "found") {
-        claimedServerIds.add(reconciliation.report.id);
-        const synced = await markReportAsSynced(
-          item.localId,
-          reconciliation.report.id,
-          reconciliation.report.codigo,
-        );
-        if (synced) {
-          sent += 1;
-        }
-        continue;
-      }
-
-      if (reconciliation.status === "error") {
-        await updateSyncStatus(
-          item.localId,
-          "pendiente",
-          reconciliation.errorMessage,
-        );
-        continue;
-      }
-    }
-
+    // Se reintenta directo sobre /reportes: el payload lleva el id `rep-...` original
+    // del reporte, así que si la subida anterior ya había entrado la API responde con
+    // el registro existente y no se duplica nada.
     const attempt = await attemptSend(item.payload);
 
     if (!attempt.ok) {
@@ -189,7 +159,6 @@ async function runSync(): Promise<SyncSummary> {
       continue;
     }
 
-    claimedServerIds.add(attempt.report.id);
     const synced = await markReportAsSynced(
       item.localId,
       attempt.report.id,
@@ -208,17 +177,7 @@ async function runSync(): Promise<SyncSummary> {
 
 export const enviarReporte = sendReport;
 
-export {
-  CLOCK_SKEW_TOLERANCE_MS,
-  MATCH_RADIUS_METERS,
-  findMatchingServerReport,
-  reconcileUncertainReport,
-} from "./reconciliation";
-export type {
-  CandidateReport,
-  MatchingOptions,
-  ReconciliationResult,
-} from "./reconciliation";
+
 
 export type {
   InvalidReportResult,

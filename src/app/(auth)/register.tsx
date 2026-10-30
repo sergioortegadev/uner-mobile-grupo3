@@ -10,12 +10,10 @@ import { useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const DNI_REGEX = /^\d{7,8}$/;
 const PASSWORD_MIN_LENGTH = 6;
 
 type ErroresRegistro = {
   nombre?: string;
-  dni?: string;
   email?: string;
   password?: string;
 };
@@ -23,7 +21,6 @@ type ErroresRegistro = {
 const RegisterScreen = () => {
   const { register } = useAuth();
   const [nombre, setNombre] = useState("");
-  const [dni, setDni] = useState("");
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
   const [password, setPassword] = useState("");
@@ -33,17 +30,12 @@ const RegisterScreen = () => {
 
   const registrarse = async () => {
     const nombreLimpio = nombre.trim();
-    const dniLimpio = dni.trim();
     const emailLimpio = email.trim();
     const telefonoLimpio = telefono.trim();
     const nuevosErrores: ErroresRegistro = {};
 
     if (!nombreLimpio) {
       nuevosErrores.nombre = "Ingresá tu nombre.";
-    }
-
-    if (dniLimpio && !DNI_REGEX.test(dniLimpio)) {
-      nuevosErrores.dni = "El DNI debe tener 7 u 8 dígitos.";
     }
 
     if (!emailLimpio) {
@@ -67,7 +59,6 @@ const RegisterScreen = () => {
       email: emailLimpio,
       password,
       telefono: telefonoLimpio || null,
-      ...(dniLimpio ? { dni: dniLimpio } : {}),
     };
 
     setCargando(true);
@@ -103,15 +94,6 @@ const RegisterScreen = () => {
               error={errores.nombre}
               autoCapitalize="words"
               autoComplete="name"
-              disabled={cargando}
-            />
-            <Input
-              label="DNI (opcional)"
-              value={dni}
-              onChangeText={setDni}
-              error={errores.dni}
-              keyboardType="number-pad"
-              maxLength={8}
               disabled={cargando}
             />
             <Input

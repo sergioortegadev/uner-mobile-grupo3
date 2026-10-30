@@ -1,8 +1,10 @@
-import type { Coordenadas, Coordinates } from "../types";
+import type { Coordenadas, Coordinates, Zona } from "../types";
 
 export type GeoPoint = Coordenadas | Coordinates;
 
 const EARTH_RADIUS_METERS = 6_371_000;
+
+const POLYGON_EPSILON = 1e-12;
 
 const toRadians = (degrees: number): number => (degrees * Math.PI) / 180;
 
@@ -48,4 +50,67 @@ export function isWithinRadius(
   radiusMeters: number = 50
 ): boolean {
   return calculateDistanceInMeters(origin, destination) <= radiusMeters;
+}
+
+/**
+ * Determina si el punto `point` yace sobre el segmento a–b, extremos incluidos.
+ */
+function isPointOnSegment(point: Coordenadas, a: Coordenadas, b: Coordenadas): boolean {
+  const cross =
+    (b.longitud - a.longitud) * (point.latitud - a.latitud) -
+    (b.latitud - a.latitud) * (point.longitud - a.longitud);
+  if (Math.abs(cross) > POLYGON_EPSILON) return false;
+  return (
+    point.latitud >= Math.min(a.latitud, b.latitud) - POLYGON_EPSILON &&
+    point.latitud <= Math.max(a.latitud, b.latitud) + POLYGON_EPSILON &&
+    point.longitud >= Math.min(a.longitud, b.longitud) - POLYGON_EPSILON &&
+    point.longitud <= Math.max(a.longitud, b.longitud) + POLYGON_EPSILON
+  );
+}
+
+/**
+ * Determina si un punto cae dentro de un polígono mediante trazado de rayo (par-impar).
+ * Un punto sobre una arista o sobre un vértice cuenta como incluido.
+ * El polígono no repite el primer punto al final; con menos de tres vértices no contiene nada.
+ */
+export function isPointInPolygon(point: GeoPoint, polygon: readonly Coordenadas[]): boolean {
+  if (polygon.length < 3) return false;
+
+  const { lat, lng } = extractLatLng(point);
+  const target: Coordenadas = { latitud: lat, longitud: lng };
+
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+
+    if (isPointOnSegment(target, a, b)) return true;
+
+    const crosses =
+      a.latitud > target.latitud !== b.latitud > target.latitud &&
+      target.longitud <
+        ((b.longitud - a.longitud) * (target.latitud - a.latitud)) /
+          (b.latitud - a.latitud) +
+          a.longitud;
+
+    if (crosses) inside = !inside;
+  }
+
+  return inside;
+}
+
+/**
+ * Resuelve a qué zona pertenece un punto según su límite geográfico.
+ * Devuelve el id de la primera zona que contiene al punto, o null si ninguna lo contiene.
+ */
+export function resolveZoneIdForCoordinates(
+  point: GeoPoint,
+  zones: readonly Zona[]
+): string | null {
+  for (const zone of zones) {
+    if (isPointInPolygon(point, zone.limite)) {
+      return zone.id;
+    }
+  }
+  return null;
 }

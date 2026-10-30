@@ -61,4 +61,12 @@ export const kvStorage = {
   async getAllKeys(): Promise<string[]> {
     return AsyncStorage.getAllKeysAsync();
   },
+
+  /**
+   * Obtiene las claves almacenadas que comienzan con el prefijo indicado.
+   */
+  async getKeysByPrefix(prefix: string): Promise<string[]> {
+    const keys = await AsyncStorage.getAllKeysAsync();
+    return keys.filter((key) => key.startsWith(prefix));
+  },
 };
