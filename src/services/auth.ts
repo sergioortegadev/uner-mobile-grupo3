@@ -107,7 +107,6 @@ export class MockAuthService implements AuthService {
     const nuevoUsuario: Usuario = {
       id: `usr-${Date.now()}`,
       nombre: datos.nombre,
-      ...(datos.dni !== undefined ? { dni: datos.dni } : {}), // dni opcional hasta que la API esté lista.
       email: emailLimpio,
       telefono: datos.telefono || null,
       rol: "vecino", // Todo usuario autoregistrado ingresa como vecino, luego se cambiaría en la DB

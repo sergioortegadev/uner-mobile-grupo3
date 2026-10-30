@@ -31,7 +31,7 @@ const PhotoSelector = ({ photos, onChangePhotos }: PhotoSelectorProps) => {
     }
 
     const newPhoto: Foto = {
-      id: `foto-${Date.now()}`,
+      id: `fot-${Date.now()}`,
       url: uri,
       momento: "problema",
     };
@@ -51,7 +51,7 @@ const PhotoSelector = ({ photos, onChangePhotos }: PhotoSelectorProps) => {
   // V03 para reemplazar una foto existente con una nueva.
   const replacePhoto = (photoId: string, uri: string) => {
     onChangePhotos(
-      photos.map((photo) => (photo.id === photoId ? { ...photo, id: `foto-${Date.now()}`, url: uri } : photo)),
+      photos.map((photo) => (photo.id === photoId ? { ...photo, id: `fot-${Date.now()}`, url: uri } : photo)),
     );
   };
 

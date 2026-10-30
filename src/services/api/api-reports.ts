@@ -17,6 +17,13 @@ const RADIO_MAXIMO_CERCANOS_M = 50;
 const POR_PAGINA_MAPA = 500;
 const TIMEOUT_CREAR_MS = 30_000;
 
+/** Formato de id que acepta la API para registros creados en el teléfono. */
+const PATRON_ID_REPORTE = /^rep-[A-Za-z0-9_-]{3,36}$/;
+const PATRON_ID_FOTO = /^fot-[A-Za-z0-9_-]{3,36}$/;
+
+/** El código de seguimiento es `GCHU-<año>-<5 dígitos>` (el QR del mostrador lo muestra así). */
+const PATRON_CODIGO_SEGUIMIENTO = /^GCHU-\d{4}-\d{5}$/i;
+
 /** Bandeja: más adhesiones primero; en empate, el más nuevo primero. */
 const ordenBandeja = (a: Reporte, b: Reporte): number =>
   (b.adhesiones ?? 0) - (a.adhesiones ?? 0) || new Date(b.creadoEn).getTime() - new Date(a.creadoEn).getTime();
@@ -44,9 +51,16 @@ export class ApiReportService implements ReportService {
       .sort(ordenBandeja);
   }
 
-  async getReportById(id: string): Promise<Reporte | null> {
+  async getReportById(idOrCode: string): Promise<Reporte | null> {
+    const identificador = idOrCode.trim();
+    // El escáner entrega el código de seguimiento tal cual viene en el QR: en ese caso
+    // se consulta la ruta por código, no la de id interno.
+    const ruta = PATRON_CODIGO_SEGUIMIENTO.test(identificador)
+      ? `/reportes/codigo/${encodeURIComponent(identificador)}`
+      : `/reportes/${encodeURIComponent(identificador)}`;
+
     try {
-      const { datos } = await apiRequest<Reporte>(`/reportes/${encodeURIComponent(id)}`);
+      const { datos } = await apiRequest<Reporte>(ruta);
       return datos;
     } catch (error) {
       // 404: no existe. 400: el identificador no tiene forma de reporte.
@@ -57,23 +71,28 @@ export class ApiReportService implements ReportService {
 
   async createReport(data: CreateReportDTO): Promise<Reporte> {
     // Primero se suben las fotos y el audio (en orden), después se manda el reporte con sus URLs.
-    const fotos: { url: string }[] = [];
+    const fotos: { id?: string; url: string }[] = [];
     for (const foto of data.fotos) {
-      fotos.push({ url: await uploadFile(foto.url) });
+      const url = await uploadFile(foto.url);
+      // El id lo genera el teléfono cuando la foto se sacó sin señal; la API lo usa para no duplicar.
+      fotos.push(PATRON_ID_FOTO.test(foto.id) ? { id: foto.id, url } : { url });
     }
     const audioUrl = data.audioUrl ? await uploadFile(data.audioUrl) : null;
 
-    // zonaId, autorId y cuadrillaId los completa la API. creadoEn, si no se manda, es la hora del servidor.
+    // zonaId, autorId y cuadrillaId los completa la API.
+    // El id del cliente hace idempotente el POST y creadoEn es la fecha del hecho, no la de subida.
     const { datos } = await apiRequest<Reporte>("/reportes", {
       method: "POST",
       timeoutMs: TIMEOUT_CREAR_MS,
       body: {
+        ...(data.id && PATRON_ID_REPORTE.test(data.id) ? { id: data.id } : {}),
         tipoId: data.tipoId,
         descripcion: data.descripcion,
         audioUrl,
         fotos,
         coordenadas: data.coordenadas,
         direccion: data.direccion,
+        creadoEn: data.creadoEn ?? new Date().toISOString(),
       },
     });
     return datos;

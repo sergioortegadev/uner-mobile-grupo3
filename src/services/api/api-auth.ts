@@ -10,10 +10,14 @@ const USER_KEY = "@reporte_ciudadano:usuario";
 
 type TokensSesion = Omit<RespuestaAuth, "user">;
 
-/** Respuesta de POST /auth/ingreso y POST /auth/registro. */
+/**
+ * Respuesta de POST /auth/ingreso y POST /auth/registro, tal cual la define
+ * `contract/api.ts` (`Sesion`). No coincide con `RespuestaAuth`, que es la forma
+ * interna de la app: la traducción se hace en un solo lugar, acá.
+ */
 interface SesionApi {
-  access_token: string;
-  user: Usuario;
+  token: string;
+  usuario: Usuario;
 }
 
 export class ApiAuthService implements AuthService {
@@ -50,27 +54,27 @@ export class ApiAuthService implements AuthService {
     const { datos } = await apiRequest<SesionApi>("/auth/ingreso", {
       method: "POST",
       auth: false,
-      body: { email: credenciales.email.trim(), password: credenciales.password },
+      // `IngresoDto` pide `contrasena`; `password` lo rechaza el ValidationPipe global.
+      body: { email: credenciales.email.trim(), contrasena: credenciales.password },
     });
-    const respuesta: RespuestaAuth = { user: datos.user, access_token: datos.access_token, token_type: "Bearer" };
+    const respuesta: RespuestaAuth = { user: datos.usuario, access_token: datos.token, token_type: "Bearer" };
     await this.guardarSesion(respuesta);
     return respuesta;
   }
 
   async register(datos: RegistroUsuarioDTO): Promise<RespuestaAuth> {
-    const dni = datos.dni?.trim();
     const { datos: sesion } = await apiRequest<SesionApi>("/auth/registro", {
       method: "POST",
       auth: false,
+      // `RegistroDto` acepta sólo nombre, email, contrasena y telefono.
       body: {
         nombre: datos.nombre.trim(),
         email: datos.email.trim(),
-        password: datos.password,
+        contrasena: datos.password,
         telefono: datos.telefono?.trim() || null,
-        ...(dni ? { dni } : {}),
       },
     });
-    const respuesta: RespuestaAuth = { user: sesion.user, access_token: sesion.access_token, token_type: "Bearer" };
+    const respuesta: RespuestaAuth = { user: sesion.usuario, access_token: sesion.token, token_type: "Bearer" };
     await this.guardarSesion(respuesta);
     return respuesta;
   }

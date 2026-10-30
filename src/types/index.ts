@@ -38,6 +38,7 @@ export interface Reporte {
 }
 
 export interface CreateReportDTO {
+  id?: string;
   tipoId: string;
   descripcion: string | null;
   audioUrl: string | null;
@@ -47,6 +48,7 @@ export interface CreateReportDTO {
   autorId: string;
   zonaId: string ;
   cuadrillaId:string | null;
+  creadoEn?: string;
 }
 
 export interface TipoDeReporte {
@@ -68,7 +70,6 @@ export interface CambioDeEstado {
 
 export interface Usuario {
   id: string;
-  dni?: string;
   nombre: string;
   email: string;
   telefono: string | null;
@@ -98,7 +99,10 @@ export interface CredencialesAuth {
   password: string;
 }
 
-// Posiblemente se modifique cuando estén los endpoint implementados
+/**
+ * Forma interna de la sesión en la app. La API responde `Sesion` (`{ token, usuario }`);
+ * `ApiAuthService` traduce en el borde y el resto de la app sigue usando estos nombres.
+ */
 export interface RespuestaAuth {
   user: Usuario;
   access_token: string;
@@ -111,7 +115,6 @@ export interface RespuestaAuth {
 
 export interface RegistroUsuarioDTO {
   nombre: string;
-  dni?: string;
   email: string;
   password: string;
   telefono?: string | null;
