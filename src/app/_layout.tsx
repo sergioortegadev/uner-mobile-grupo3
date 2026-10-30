@@ -7,7 +7,7 @@ import { useEffect } from "react";
 import { useColorScheme } from "react-native";
 
 const NavigationGuard = () => {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, isLocked } = useAuth();
   const segments = useSegments() as string[];
   const router = useRouter();
   const currentSegment = segments[0];
@@ -15,11 +15,20 @@ const NavigationGuard = () => {
   const isInVecinoGroup = currentSegment === "(vecino)";
   const isInOperadorGroup = currentSegment === "(operador)";
 
+  const isInUnlock = isInAuthGroup && segments[1] === "unlock";
+
   useEffect(() => {
     if (isLoading) return;
 
+    if (isLocked) {
+      if (!isInUnlock) {
+        router.replace("/(auth)/unlock" as any);
+      }
+      return;
+    }
+
     if (!user) {
-      if (!isInAuthGroup) {
+      if (!isInAuthGroup || isInUnlock) {
         router.replace("/(auth)/login" as any);
       }
       return;
@@ -34,7 +43,7 @@ const NavigationGuard = () => {
       router.replace("/(operador)" as any);
       return;
     }
-  }, [user, isLoading, isInAuthGroup, isInVecinoGroup, isInOperadorGroup, router]);
+  }, [user, isLoading, isLocked, isInAuthGroup, isInUnlock, isInVecinoGroup, isInOperadorGroup, router]);
 
   if (isLoading) {
     return <LoadingState message="Verificando sesión..." />;
