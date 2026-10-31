@@ -6,6 +6,7 @@ import {
   COLOR_POR_ESTADO,
   ETIQUETA_POR_ESTADO,
 } from "@/constants/colores-estado";
+import { toPublicReport } from "@/helpers/public-report";
 import { reportService } from "@/services/reports";
 import { useEffect, useState } from "react";
 import { StyleSheet } from "react-native";
@@ -21,9 +22,10 @@ const VecinoMapaScreen = () => {
       .getReports()
       .then((reportes) => {
         if (!activo) return;
-        // Solo datos que se pueden mostrar al público: sin autor ni audio
+        // M05: desde acá la pantalla solo trabaja con datos públicos
+        const publicos = reportes.map(toPublicReport);
         setMarkers(
-          reportes.map((r) => ({
+          publicos.map((r) => ({
             id: r.id,
             latitud: r.coordenadas.latitud,
             longitud: r.coordenadas.longitud,
