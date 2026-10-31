@@ -45,8 +45,8 @@ export interface CreateReportDTO {
   coordenadas: Coordenadas;
   direccion: string;
   autorId: string;
-  zonaId: string ;
-  cuadrillaId:string | null;
+  zonaId: string;
+  cuadrillaId: string | null;
 }
 
 export interface TipoDeReporte {
@@ -118,5 +118,6 @@ export interface RegistroUsuarioDTO {
 }
 
 export * from "./location";
-export * from './network';
-export * from './offline';
+export * from "./network";
+export * from "./offline";
+export * from "./public";
